@@ -42,6 +42,19 @@ resource "aws_key_pair" "ec2_key_pair" {
   public_key = tls_private_key.ec2_key.public_key_openssh
 }
 
+# Exibir a chave privada
+output "private_key" {
+  description = "The private key generated for EC2"
+  value       = tls_private_key.ec2_key.private_key_pem
+  sensitive   = true  # Mantém a chave privada como sensível, não será registrada no Terraform state file
+}
+
+# Salvar a chave privada PEM em um arquivo local
+resource "local_file" "private_key_pem_file" {
+  content  = tls_private_key.ec2_key.private_key_pem
+  filename = "./private_key.pem"
+}
+
 # Cria uma VPC com o CIDR 10.0.0.0/16, habilitando suporte para DNS e hostnames dentro da rede.
 resource "aws_vpc" "main_vpc" {
   cidr_block           = "10.0.0.0/16"
@@ -157,13 +170,6 @@ resource "aws_secretsmanager_secret" "ec2_private_key_secret" {
 resource "aws_secretsmanager_secret_version" "ec2_private_key_secret_version" {
   secret_id     = aws_secretsmanager_secret.ec2_private_key_secret.id
   secret_string = tls_private_key.ec2_key.private_key_pem
-}
-
-# Remover o output da chave privada, para não expor a chave em outputs:
- output "private_key" {
-   description = "Chave privada para acessar a instância EC2"
-   value       = tls_private_key.ec2_key.private_key_pem
-   sensitive   = true
 }
 
 #Criar uma role IAM com permissões para a instância EC2 enviar logs para o CloudWatch
