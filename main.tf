@@ -1,5 +1,19 @@
+terraform {
+  # Colocado um required providers específico caso a empresa utilize uma versão específica
+  required_providers {
+    aws = {
+      source  = "hashicorp/aws"
+      version = "~> 4.16"
+    }
+  }
+
+  required_version = ">= 1.2.0"
+}
+
 # Define o provedor AWS e configura a região como us-east-1.
 provider "aws" {
+  # Utilizado para controlar o perfil que tenha acesso as funcionalidades de criação de EC2
+  profile = "ray-terraform"
   region = "us-east-1"
 }
 
@@ -13,10 +27,10 @@ variable "projeto" {
 variable "candidato" {
   description = "Nome do candidato"
   type        = string
-  default     = "SeuNome"
+  default     = "rayana"
 }
 
-#Gera uma chave privada RSA de 2048 bits para ser usada como par de chaves SSH.
+# Gera uma chave privada RSA de 2048 bits para ser usada como par de chaves SSH.
 resource "tls_private_key" "ec2_key" {
   algorithm = "RSA"
   rsa_bits  = 2048
@@ -77,10 +91,6 @@ resource "aws_route_table" "main_route_table" {
 resource "aws_route_table_association" "main_association" {
   subnet_id      = aws_subnet.main_subnet.id
   route_table_id = aws_route_table.main_route_table.id
-
-  tags = {
-    Name = "${var.projeto}-${var.candidato}-route_table_association"
-  }
 }
 
 # Cria um grupo de segurança que permite:
@@ -88,7 +98,7 @@ resource "aws_route_table_association" "main_association" {
 # Saída de todo o tráfego (todas as portas e protocolos) para qualquer destino.
 resource "aws_security_group" "main_sg" {
   name        = "${var.projeto}-${var.candidato}-sg"
-  description = "Permitir SSH apenas de IP específico e bloquear portas comuns de ataque"
+  description = "Permitir SSH apenas de IP especifico e bloquear portas comuns de ataque"
   vpc_id      = aws_vpc.main_vpc.id
 
   # Regras de entrada (permitir SSH apenas de um IP específico)
@@ -97,7 +107,7 @@ resource "aws_security_group" "main_sg" {
     from_port        = 22
     to_port          = 22
     protocol         = "tcp"
-    cidr_blocks      = ["${var.allowed_ssh_ip}"]  # Substituir pelo IP confiável
+    cidr_blocks      = ["193.186.4.202/32"]  # Substituir pelo IP confiável
   }
 
   # Não abrir portas comumente atacadas como 3389 (RDP), 23 (Telnet), etc.
@@ -134,49 +144,11 @@ data "aws_ami" "debian12" {
   owners = ["679593333241"]
 }
 
-# Cria uma instância EC2 do tipo t2.micro utilizando a AMI do Debian 12.
-# A instância é configurada com um disco de 20 GB.
-# Um script de inicialização (user_data) é executado para atualizar e atualizar os pacotes do # sistema assim que a instância for criada.
-resource "aws_instance" "debian_ec2" {
-  ami             = data.aws_ami.debian12.id
-  instance_type   = "t2.micro"
-  subnet_id       = aws_subnet.main_subnet.id
-  key_name        = aws_key_pair.ec2_key_pair.key_name
-  security_groups = [aws_security_group.main_sg.name]
-
-  associate_public_ip_address = true
-
-  root_block_device {
-    volume_size           = 20
-    volume_type           = "gp2"
-    delete_on_termination = true
-  }
-
-  user_data = <<-EOF
-              #!/bin/bash
-              apt-get update -y
-              apt-get upgrade -y
-              EOF
-
-  tags = {
-    Name = "${var.projeto}-${var.candidato}-ec2"
-  }
-}
-
-#  Exibe a chave privada gerada pelo Terraform.
-output "private_key" {
-  description = "Chave privada para acessar a instância EC2"
-  value       = tls_private_key.ec2_key.private_key_pem
-  sensitive   = true
-}
-
-# Exibe o endereço IP público da instância EC2.
 output "ec2_public_ip" {
   description = "Endereço IP público da instância EC2"
   value       = aws_instance.debian_ec2.public_ip
 }
 
-#
 resource "aws_secretsmanager_secret" "ec2_private_key_secret" {
   name        = "${var.projeto}-${var.candidato}-ec2-private-key"
   description = "Chave privada para acessar a instância EC2"
@@ -228,24 +200,22 @@ resource "aws_iam_instance_profile" "ec2_instance_profile" {
   role = aws_iam_role.ec2_role.name
 }
 
+# Cria uma instância EC2 do tipo t2.micro utilizando a AMI do Debian 12.
+# A instância é configurada com um disco de 20 GB.
+# Um script de inicialização (user_data) é executado para atualizar e atualizar os pacotes do # sistema assim que a instância for criada.
 resource "aws_instance" "debian_ec2" {
+  depends_on = [aws_security_group.main_sg]
   # Especifica o ID da imagem AMI para criar a instância EC2 (Debian 12 no caso).
-  ami = data.aws_ami.debian12.id
-
+  ami             = data.aws_ami.debian12.id
   # Define o tipo da instância EC2 (t2.micro, uma das opções de uso gratuito da AWS).
-  instance_type = "t2.micro"
-
+  instance_type   = "t2.micro"
   # Define a subnet onde a instância será criada.
-  subnet_id = aws_subnet.main_subnet.id
-
+  subnet_id       = aws_subnet.main_subnet.id
   # Especifica o nome da chave SSH para acessar a instância.
-  key_name = aws_key_pair.ec2_key_pair.key_name
-
+  key_name        = aws_key_pair.ec2_key_pair.key_name
   # Associa a instância a um ou mais grupos de segurança (security groups).
-  security_groups = [aws_security_group.main_sg.name]
-
-  # Associa um perfil de instância IAM para que a instância EC2 tenha permissões, 
-  # como enviar logs para o CloudWatch.
+  security_groups = [aws_security_group.main_sg.id]
+  # Associa um perfil de instância IAM para que a instância EC2 tenha permissões, como enviar logs para o CloudWatch.
   iam_instance_profile = aws_iam_instance_profile.ec2_instance_profile.name
 
   # Garante que a instância receberá um endereço IP público.
@@ -254,50 +224,46 @@ resource "aws_instance" "debian_ec2" {
   # Configuração do disco raiz da instância.
   root_block_device {
     # Tamanho do disco em GB.
-    volume_size = 20
-
+    volume_size           = 20
     # Tipo do disco (gp2 - SSD padrão da AWS).
-    volume_type = "gp2"
-
+    volume_type           = "gp2"
     # Define que o disco será apagado quando a instância for terminada.
     delete_on_termination = true
   }
 
   # Script de inicialização (user_data) que será executado quando a instância for iniciada.
   user_data = <<-EOF
-              # Atualiza o sistema.
+              #!/bin/bash
               apt-get update -y
               apt-get upgrade -y
-
-              # Instala o servidor web Nginx.
               apt-get install nginx -y
               systemctl start nginx
               systemctl enable nginx
 
-              # Instala o agente do CloudWatch.
+              # Instalação do CloudWatch Agent
               apt-get install -y amazon-cloudwatch-agent
 
-              # Cria o arquivo de configuração para o CloudWatch Agent para enviar logs.
+              # Configuração do CloudWatch Agent para enviar logs
               cat <<EOT >> /opt/aws/amazon-cloudwatch-agent/etc/amazon-cloudwatch-agent.json
               {
                 "agent": {
-                  "metrics_collection_interval": 60,   # Intervalo de coleta de métricas.
-                  "logfile": "/var/log/messages",      # Caminho do arquivo de log.
-                  "region": "us-east-1"               # Região AWS.
+                  "metrics_collection_interval": 60,
+                  "logfile": "/var/log/messages",
+                  "region": "us-east-1"
                 },
                 "logs": {
                   "logs_collected": {
                     "files": {
                       "collect_list": [
                         {
-                          "file_path": "/var/log/syslog",       # Coleta logs do sistema.
-                          "log_group_name": "/aws/ec2/${var.projeto}-${var.candidato}/syslog",  # Nome do grupo de logs.
-                          "log_stream_name": "{instance_id}"     # Nome do stream de logs.
+                          "file_path": "/var/log/syslog",
+                          "log_group_name": "/aws/ec2/${var.projeto}-${var.candidato}/syslog",
+                          "log_stream_name": "{instance_id}"
                         },
                         {
-                          "file_path": "/var/log/nginx/access.log",   # Coleta logs de acesso do Nginx.
-                          "log_group_name": "/aws/ec2/${var.projeto}-${var.candidato}/nginx_access",  # Nome do grupo de logs.
-                          "log_stream_name": "{instance_id}"     # Nome do stream de logs.
+                          "file_path": "/var/log/nginx/access.log",
+                          "log_group_name": "/aws/ec2/${var.projeto}-${var.candidato}/nginx_access",
+                          "log_stream_name": "{instance_id}"
                         }
                       ]
                     }
